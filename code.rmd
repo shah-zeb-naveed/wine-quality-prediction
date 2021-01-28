@@ -1,0 +1,429 @@
+---
+title: "Assignment 3"
+author: Shahzeb Naveed (20789222) | Zaryab Javaid (20852202) | Muhammad Mohsin Tahir (20812155)
+output: 
+    html_document:
+        theme: journal
+
+---
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = FALSE)
+
+library(mlogit)
+library(dplyr)
+library(MASS)
+library(reshape2)
+library(car)
+library(corrgram)
+library(ggplot2)
+library(corrplot)
+library(sjPlot)
+```
+
+## **Introduction**
+
+*For the love of wine, and data science,*\
+*we attempt to explore, what makes it fine.*\
+
+#### **Objective**
+
+After analyzing several physiochemical properties, we aim to build a model that can predict quality of a wine based on its constituents. The two datasets employed contain information on red and white variants of the Portuguese "Vinho Verde" wine. Initially, the combined dataset had `6497` rows with all columns as integers apart from `color` which was coded as factor. For a reason to be discussed later, duplicate rows were excluded from our analysis leaving beind `5320` rows. With this aim in mind, we test the **hypothesis** that whether the chosen properties significantly determine wine's quality.
+
+```{r,results="hide"}
+red <- read.csv("C:\\Users\\shah_\\Downloads\\winequality-red.csv", sep = ";")
+white <- read.csv("C:\\Users\\shah_\\Downloads\\winequality-white.csv", sep = ";")
+red$color <- 1
+white$color <- 0
+final <- rbind(white,red)
+final_cor <- rbind(white,red)
+str(final)
+dim(final)
+
+```
+
+
+```{r,warning=FALSE,message=FALSE,results="hide",echo=FALSE}
+
+#library(stargazer)
+#stargazer(final,out="summary.html")
+#htmltools::includeHTML("summary.html")
+
+```
+
+```{r,warning=FALSE}
+
+#library(webshot)
+#webshot::webshot("summary.html")
+
+```
+
+```{r}
+final <- final %>% mutate(quality=as.factor(quality))
+```
+
+
+```{r,results="hide"}
+final <- final[!duplicated(final),]
+dim(final)
+```
+
+## **Data Cleaning and Exploration**
+
+To quickly begin with the EDA process, we explore the class distribution of our outcome variable `quality` and find that the classes are imbalanced (unfortunately). Furthermore, the dataset has ``r sum(is.na(final))`` NAs (fortunately).
+
+
+```{r,results="hide"}
+table(final$quality)
+```
+
+```{r, fig.width=14,fig.height=2}
+ggplot(data=final, aes(final$quality),fill = final$quality) + geom_bar(fill = "#9999CC",color = "#9999CC") + ggtitle("Distribution of Classes in Quality") + xlab("Quality") + ylab("Count")
+
+```
+
+To dig deeper and explore the spread of variables, we plot boxplots and find that apart from `alcohol` almost all variables have quite a large number of outliers. This, along with the fact that our classes are imbalanced, indicates the possibility that some ingredients are found in excessive quantity in low-quality and some in high-quality wines. Anyways, to ensure our model is not influenced by outliers, we removed all the outliers that had a less than 1% chance of occurring as a non-outlier.
+
+```{r, fig.width=14,fig.height=3.5}
+attach(final)
+
+par(mfrow=c(2,6), oma = c(1,1,0,0) + 0.1,  mar = c(3,3,1,1) + 0.1)
+
+boxplot(fixed.acidity,col="steelblue", pch=19)
+mtext("Fixed Acidity", cex=0.8, side=1, line=2)
+
+boxplot(volatile.acidity, col="steelblue1", pch=19)
+mtext("Volatile Acidity", cex=0.8, side=1, line=2)
+
+boxplot(citric.acid, col="steelblue2", pch=19)
+mtext("Citric Acid", cex=0.8, side=1, line=2)
+
+boxplot(residual.sugar, col="steelblue3", pch=19)
+mtext("Residual Sugar", cex=0.8, side=1, line=2)
+
+boxplot(chlorides, col="skyblue", pch=19)
+mtext("Chlorides", cex=0.8, side=1, line=2)
+
+
+boxplot(alcohol, col="skyblue1", pch=19)
+mtext("Alcohol", cex=0.8, side=1, line=2)
+
+boxplot(density, col="skyblue2", pch=19)
+mtext("density", cex=0.8, side=1, line=2)
+
+boxplot(free.sulfur.dioxide, col="skyblue3", pch=19)
+mtext("free.sulfur.dioxide", cex=0.8, side=1, line=2)
+
+boxplot( pH, col="skyblue4", pch=19)
+mtext("pH", cex=0.8, side=1, line=2)
+
+boxplot(sulphates, col="royalblue", pch=19)
+mtext("sulphates", cex=0.8, side=1, line=2)
+
+boxplot(total.sulfur.dioxide, col="royalblue1", pch=19)
+mtext("total.sulfur.dioxide", cex=0.8, side=1, line=2)
+
+detach(final)
+
+
+```
+
+
+```{r}
+
+final_r <- final
+final_r<- final[!abs(final$fixed.acidity) > 3,]
+final_r <- final[!abs(final$volatile.acidity) > 3,]
+final_r<- final[!abs(final$citric.acid) > 3,]
+final_r<- final[!abs(final$residual.sugar) > 3,]
+final_r<- final[!abs(final$chlorides) > 3,]
+final_r <- final[!abs(final$density) > 3,]
+final_r<- final[!abs(final$pH) > 3,]
+final_r <- final[!abs(final$sulphates) > 3,]
+final_r <- final[!abs(final$alcohol) > 3,]
+
+
+```
+
+
+To explore correlations in our data, we plot a **heatmap** and find that the highest postive correlation exists between `alcohol` and `quality`. `Citric.acid` and some other variables have apparently no correlation with `quality`. We 'll keep this in mind while developing our model.
+
+
+```{r,warning=FALSE, fig.width=14,fig.height=5}
+
+library(ggcorrplot)
+
+ggcorrplot(cor(final_cor), p.mat = cor_pmat(final_cor), hc.order=TRUE, type='lower',method = "square",outline.col="white",ggtheme = ggplot2::theme_gray,
+   colors = c("#6D9EC1", "white", "#E46726"),title = "Correlation Matrix")
+
+```
+
+## **Model Building**
+
+As `quality` is an integer, we treat it as an ordinal categorical variable and employ **ordinal logistic regression** to build a prediction model. We will use `polr()` as it fits a logistic or probit regression model to an ordered factor response. But before diving into modelling, we first take a look at some of the underlying assumptions below.
+
+#### **Assumptions of Logistic Regression**
+
+1. **Categorical Predictor:** Quality is ordinal so this assumption holds.
+2. **Large sample size:** We have ``r nrow(final)`` rows so we are good to go!
+3. **Independent Observations:** We have independent observations with all duplicates removed.
+4. **No or Less Multicollinearity:** We'll come to that in a while.
+5. **Linearity of predictors and logit of outcome variable:** We'll come to that in a while as well.
+6. **Complete Information:** As mentioned earlier, we have `0` NAs.
+7. **Incomplete Separation:** We can clearly see that there is no complete separation in the scatterplots. `Appendix (i)`
+
+To check Multicollinearity, we calculate **Variance Inflation Factors** (VIF) `Appendix (ii)`. Based on this, we exclude 'density' as it has a VIF = 10.17 > 10 (a well-established no-go area). We removed color as well because it is really not a "determinant" of quality.
+
+```{r}
+temp <- glm(quality ~ fixed.acidity + volatile.acidity + residual.sugar + 
+    chlorides + density + free.sulfur.dioxide + total.sulfur.dioxide  + pH + color  + sulphates + alcohol, data = final,family = binomial())
+
+#vif(temp)
+
+#1/vif(temp)
+```
+
+
+We now move on to testing the last assumption: Log-Linearity! To do this, we regress our model with log(predictor)*predictor interaction terms. When we do this `Appendix (iii)`, all the interaction variables except those of `free.sulphur.dioxide` and `pH`, are found non-signficant indicating that the assumption of linearity is met for all the other variables.
+
+```{r}
+final$logfixed.acidity <- log(final$fixed.acidity)*final$fixed.acidity
+final$logvolatile.acidity <- log(final$volatile.acidity)*final$volatile.acidity
+final$logresidual.sugar <- log(final$residual.sugar)*final$residual.sugar
+final$logchlorides <- log(final$chlorides)*final$chlorides
+final$logfree.sulfur.dioxide <- log(final$free.sulfur.dioxide)*final$free.sulfur.dioxide
+final$logtotal.sulfur.dioxide <- log(final$total.sulfur.dioxide)*final$total.sulfur.dioxide
+final$logpH <- log(final$pH)*final$pH
+final$logsulphates <- log(final$sulphates)*final$sulphates
+final$logalcohal <- log(final$alcohol)*final$alcohol
+
+temp1 <- glm(quality ~ fixed.acidity + volatile.acidity + residual.sugar + chlorides + free.sulfur.dioxide + total.sulfur.dioxide + pH + sulphates + alcohol
+             + logfixed.acidity + logvolatile.acidity + logresidual.sugar + logchlorides + logfree.sulfur.dioxide + logtotal.sulfur.dioxide + logpH + logsulphates +
+               logalcohal, data = final, family = binomial())
+
+#summary(temp1)
+
+```
+
+
+
+```{r,results="hide",message=FALSE,warning=FALSE}
+o_lrm <- polr(quality ~ fixed.acidity + volatile.acidity + citric.acid + residual.sugar + chlorides + total.sulfur.dioxide + sulphates + alcohol, data = final, Hess=TRUE)
+```
+
+#### **Feature Selection**
+
+For selecting predictors, we use **Backwards Step-wise Logistic Regression** using the `step()` function. For evaluation, we use **Akaike Information Criteria** that depends on model deviance (which is twice the **log-likelihood**) and number of predictor variables employed (thus penalizing the increase in number of predictors). Bottom-line: the smaller the AIC, the better the model.
+
+
+```{r,results="hide",message=FALSE,warning=FALSE}
+model  <- step(o_lrm)
+```
+
+```{r}
+#head(fitted(model))
+```
+
+Using this method, we find that by removing `citric.acid` from the model, we can achieve a lower AIC (`11716` in this case). `Appendix (iv)`
+
+
+#### **Evaluating Significance**
+
+
+```{r}
+
+ctable <- coef(summary(model))
+p <- pnorm(abs(ctable[, "t value"]), lower.tail = FALSE) * 2
+ctable <- cbind(ctable, "p value" = p)
+#ctable
+
+```
+
+Ho: 
+We observe that p-value for `fixed.acidity` is greater than `0.05` `Appendix (v)`. So, it is statistically insignifcant but when we tried removing it, it slightly increases the AIC (not good). To get a third opinion on this, we make another model with `fixed.acidity` removed and then apply **ANOVA** to see there's any improvement:
+
+```{r,results="hide",message=FALSE,warning=FALSE}
+#o_lrm_1 <- polr(quality ~ . - quality - density - color - fixed.acidity, data = final, Hess=TRUE)
+
+o_lrm_1 <- polr(quality ~ volatile.acidity + citric.acid + residual.sugar + chlorides + total.sulfur.dioxide + sulphates + alcohol, data = final, Hess=TRUE)
+
+model_2  = step(o_lrm_1)
+
+```
+
+```{r}
+anova(model,model_2)
+```
+
+```{r}
+
+model_2.0 <- polr(quality ~ 1,data=final,Hess = TRUE)
+dev0 <- deviance(model_2.0)
+dev1 <- deviance(model_2)
+modChi <- dev0 - dev1
+R2.HL <- modChi / dev0
+
+```
+
+By ANOVA, we get to know that removing `fixed.acidity` doesn't make a statistical difference. So, we keep the new model that requires less predictors. 
+
+#### **Hypothesis Testing**
+
+Ho: Co-efficients of selected predictors are zero
+
+Ha: Co-efficients of selected predictors are non-zero
+
+Based on the calculated co-efficients and their p-values, we reject Null Hypothesis and conclude that our model is significant. Our final model gives a **Hosmer and Lemeshow's R^2 for Goodness-of-Fit** of ``r round(R2.HL,2)`` and is summarised below. 
+
+```{r}
+
+summary(model_2)
+
+```
+
+#### **Model Interpretation and Insights**
+
+To interpret the co-efficients, we converted them to **odd-ratio** using exponentials, which are plotted below. For example, we would say that by keeping all other variables constant, when `residual.sugar` increases one unit, it is `1.04` times more likely to be in a higher category of `quality`. Furthermore, using confidence intervals, we can conclude that none of the intervals cross `1`, indicating that the direction of odd-ratios of all co-efficients is reliable. Thus, `sulphates` and `alcohol` have a high-positive impact on `quality` and, `chlorides` and `volatile.acidity` have a high-negative impact.
+
+
+```{r,message=FALSE,warning=FALSE}
+
+myexpcoefs <- data.frame(exp(model_2$coefficients)) 
+myexpcoefs_cis <- data.frame(exp(confint(model_2)))
+
+
+confint(model_2)
+
+cols1 <- exp(model_2$coefficients)
+cols2 <- myexpcoefs_cis$X2.5..
+cols3 <- myexpcoefs_cis$X97.5..
+
+myexp <- cbind(myexpcoefs,myexpcoefs_cis) %>% dplyr::mutate(oddratio=cols1,low25=cols2,high975 = cols3)
+
+model_2$coefficients
+
+```
+
+```{r,message=FALSE,warning=FALSE,fig.height=4,fig.width=14}
+myexp <- myexp %>% dplyr::select(oddratio,low25,high975)
+myexp <- cbind(myexpcoefs_cis[0],myexp)
+
+
+F <- myexp$oddratio
+L <- myexp$low25
+U <- myexp$high975
+names <- c("volatile.acidity","residual.sugar","chlorides","total.sulfur.dioxide","sulphates","alcohol")
+
+df <- data.frame(x = names,F,L,U)
+             
+ggplot(df, aes(x = reorder(x,F), y = F)) +
+  geom_point(size = 3,color="black") +
+  geom_errorbar(aes(ymax = U, ymin = L),color="black") + labs(x="Predictors",y="Odd Ratio") + geom_label(aes(label=round(F,2)),vjust=1.3,hjust=0,color="white",fill="slateblue4")+ scale_y_continuous(breaks = seq(0, 10, by = 1))+geom_hline(yintercept = 1,color="darkred")+ ggtitle("Odd Ratios with Confidence Intervals for Predictor Variables")+coord_flip()
+
+```
+
+#### **Testing Prediction Accuracy**
+
+For evaluating in-sample accuracy of our prediction model, we form a **confusion matrix** by `predict()`-ing using our original dataset. **Residual Plot** was also visualized and homoscedasticity was observed `Appendix (vi)`.
+
+```{r}
+
+p <- predict(model_2, type = "class") 
+confusion_matrix = as.matrix(table(Actual = final$quality, Predicted = p))
+
+```
+
+```{r,fig.height=2.4,fig.width=14}
+confusion_matrixtemp <- confusion_matrix
+confusion_matrix <- as.data.frame(confusion_matrix)
+
+ggplot(data = confusion_matrix, mapping = aes(x = Actual, y = Predicted)) + geom_tile(aes(fill = Freq)) + geom_text(aes(label = sprintf("%1.0f", Freq)), vjust = 0.34) + scale_fill_gradient(low = "gray92", high = "slateblue4")+ ggtitle("Confusion Matrix for Prediction Model") + xlab("Actual Classes") + ylab("Predicted")
+confusion_matrix <-confusion_matrixtemp
+```
+
+We can observe from above that accuracy for our model is ``r round(sum(diag(confusion_matrix))/length(final$quality)*100,2)``%. The low accuracy can be well-understood from the confusion matrix that classes with low frequency `(3,4,8,9)` were rarely predicted. This was due to the imbalance in the distribution of our classes.
+
+
+## **Gap Analysis and Future Work**
+
+Class Imbalance: As already exhibited, the imbalance in our classes had a very negative impact on the accuracy of our model. Methods such as clustering or re-sampling may be be evaluated for improved accuracy (other than collecting more data for low-quality and high-quality wines, of course).
+
+
+## **Conclusion**
+
+We conclude that quality of a wine can be significantly predicted by `sulphates`, `alohol`, `chlorides`, `volatile.acidity` and along with some impact by other variables as well that were included in our final model. The direction of odd-ratios is reliable because none of the confidence intervals cross `1`. The overall fit of the model as determined by Hosmer and Lemeshow's R^2 for Goodness-of-Fit is ``r round(R2.HL,2)``. The prediction accuracy is found to be ``r round(sum(diag(confusion_matrix))/length(final$quality)*100,2)``%.
+
+The outliers in our ingredients, along with the fact that our classes are imbalanced, indicates the possibility that some ingredients are found in excessive quantity in low-quality wine and some in high-quality wines. Also, there are not as many high-quality wines and low-quality wines as there are medium-quality wines.
+
+
+
+# **Appendix**
+
+### **Work Distribution**
+
+| Member        | Contribution  |
+| ------------- |:-------------:| -----:|-----:|-----:|-----:|
+| Shahzeb Naveed   | Plots, Reporting, EDA |
+| Zaryab Javaid   | EDA, Data Cleaning |
+| Mohsin Tahir   | Regression Modelling |
+
+
+### **Appendix (i)**
+
+```{r}
+
+temp1 <- temp
+
+df <- final
+temp <- df %>% dplyr::select(-color) %>% dplyr::mutate(quality=as.integer(quality)) 
+temp %>% ggplot(aes(y=quality,x=pH)) + geom_point()+ geom_smooth(method="lm")
+temp %>% ggplot(aes(y=quality,x=alcohol)) + geom_point()+ geom_smooth(method="lm")
+temp %>% ggplot(aes(y=quality,x=fixed.acidity)) + geom_point()+ geom_smooth(method="lm")
+temp %>% ggplot(aes(y=quality,x=volatile.acidity)) + geom_point()+ geom_smooth(method="lm")
+temp %>% ggplot(aes(y=quality,x=citric.acid)) + geom_point()+ geom_smooth(method="lm")
+temp %>% ggplot(aes(y=quality,x=residual.sugar)) + geom_point()+ geom_smooth(method="lm")
+temp %>% ggplot(aes(y=quality,x=chlorides)) + geom_point()+ geom_smooth(method="lm")
+temp %>% ggplot(aes(y=quality,x=free.sulfur.dioxide)) + geom_point()+ geom_smooth(method="lm")
+temp %>% ggplot(aes(y=quality,x=total.sulfur.dioxide)) + geom_point()+ geom_smooth(method="lm")
+temp %>% ggplot(aes(y=quality,x=density)) + geom_point()+ geom_smooth(method="lm")
+temp %>% ggplot(aes(y=quality,x=sulphates)) + geom_point()+ geom_smooth(method="lm")
+
+temp <- temp1
+```
+
+
+### **Appendix (ii)**
+
+```{r}
+vif(temp)
+```
+
+### **Appendix (iii)**
+
+```{r}
+summary(temp1)
+```
+
+
+### **Appendix (iv)**
+
+```{r}
+model  <- step(o_lrm)
+```
+
+### **Appendix (V)**
+
+```{r}
+ctable
+```
+
+### **Appendix (vi)**
+
+```{r,warning=FALSE,message=FALSE}
+
+library(sure)
+plot(surrogate(model_2, method = c("latent", "jitter"),
+jitter.scale = c("probability", "response"), nsim = 1L),ylab = "",main= "Class Residuals vs Fitted")
+
+```
